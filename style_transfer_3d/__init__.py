@@ -1,1 +1,2 @@
-from main import StyleTransferModel
+from .main import StyleTransferModel
+from .model_with_hooks import FeatureExtractor
