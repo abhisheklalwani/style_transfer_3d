@@ -24,5 +24,6 @@ class FeatureExtractor(nn.Module):
         return fn
 
     def forward(self, x: Tensor) -> Dict[str, Tensor]:
-        _ = self.model(x)
-        return self._features
+        with torch.autograd.no_grad():
+            _ = self.model(x)
+            return self._features

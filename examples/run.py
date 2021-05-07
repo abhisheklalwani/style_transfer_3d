@@ -13,6 +13,7 @@ import neural_renderer
 import numpy as np
 
 import tqdm
+import imageio
 
 import style_transfer_3d
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -90,14 +91,19 @@ def run():
     # draw object
     model.renderer.background_color = (1, 1, 1)
     loop = tqdm.tqdm(range(0, 360, 4))
+    output_images = []
     for num, azimuth in enumerate(loop):
         loop.set_description('Drawing')
         model.renderer.eye = neural_renderer.get_points_from_angles(2.732, 30, azimuth)
-        images = model.renderer.render(*model.mesh.get_batch(1))
-        image = images.data.get()[0].transpose((1, 2, 0))
+        x,y,z = model.mesh.get_batch(1)
+        x = x.to(device)
+        y = y.to(device)
+        z = z.to(device)
+        images,_,_ = model.renderer.render(x,y,z)
+        image = images[0].permute((1, 2, 0)).cpu().detach().numpy()
         #scipy.misc.toimage(image, cmin=0, cmax=1).save('%s/_tmp_%04d.png' % (directory_output, num))
-        cv2.imwrite('%s/_tmp_%04d.png' % (directory_output, num), image)
-    make_gif(directory_output, args.filename_output)
+        output_images.append(image)
+    imageio.mimsave(args.filename_output,output_images)
 
 
 if __name__ == '__main__':

@@ -12,6 +12,7 @@ import neural_renderer
 from .model_with_hooks import FeatureExtractor
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+torch.autograd.set_detect_anomaly(True)
 
 
 class StyleTransferModel(nn.Module):
@@ -95,7 +96,6 @@ class StyleTransferModel(nn.Module):
 
     def compute_style_loss(self, features):
         loss = [torch.sum(torch.square(f - fr.expand(f.shape))) for f, fr in zip(features, self.features_ref)]
-        print('Feature_ref=',len(features))
         loss = reduce(lambda a, b: a + b, loss)
         batch_size = features[0].shape[0]
         loss /= batch_size
@@ -141,7 +141,6 @@ class StyleTransferModel(nn.Module):
         # import IPython
         # IPython.embed()
         features = self.extract_style_feature(images.cpu().detach().numpy(), masks)
-        print('Style_Features=',len(features))
         loss_style = self.compute_style_loss(features)
         loss_content = self.compute_content_loss()
         loss_tv = self.compute_tv_loss(images, masks)
