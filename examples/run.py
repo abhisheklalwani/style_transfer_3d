@@ -9,20 +9,21 @@ import torch
 import cv2
 
 import neural_renderer
+import matplotlib.pyplot as plt
 import numpy as np
 import tqdm
 import imageio
-
+from skimage.io import imread, imsave
 import style_transfer_3d
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-def make_gif(working_directory, filename):
-    # generate gif (need ImageMagick)
-    options = '-delay 8 -loop 0 -layers optimize'
-    subprocess.call('convert %s %s/_tmp_*.png %s' % (options, working_directory, filename), shell=True)
-    for filename in glob.glob('%s/_tmp_*.png' % working_directory):
-        os.remove(filename)
+def make_gif(filename):
+    with imageio.get_writer(filename, mode='I') as writer:
+        for filename in sorted(glob.glob('/tmp/_tmp_*.png')):
+            writer.append_data(imageio.imread(filename))
+            os.remove(filename)
+    writer.close()
 
 
 def run():
@@ -31,18 +32,18 @@ def run():
     parser.add_argument('-im', '--filename_mesh', type=str)
     parser.add_argument('-is', '--filename_style', type=str)
     parser.add_argument('-o', '--filename_output', type=str)
-    parser.add_argument('-ls', '--lambda_style', type=float, default=1.)
-    parser.add_argument('-lc', '--lambda_content', type=float, default=2e9)
-    parser.add_argument('-ltv', '--lambda_tv', type=float, default=1e7)
+    parser.add_argument('-ls', '--lambda_style', type=float, default=1)
+    parser.add_argument('-lc', '--lambda_content', type=float, default=1e5)
+    parser.add_argument('-ltv', '--lambda_tv', type=float, default=1e2)
     parser.add_argument('-emax', '--elevation_max', type=float, default=40.)
     parser.add_argument('-emin', '--elevation_min', type=float, default=20.)
-    parser.add_argument('-lrv', '--lr_vertices', type=float, default=0.05)
-    parser.add_argument('-lrt', '--lr_textures', type=float, default=1.0)
+    parser.add_argument('-lrv', '--lr_vertices', type=float, default=0.1)
+    parser.add_argument('-lrt', '--lr_textures', type=float, default=0.001)
     parser.add_argument('-cd', '--camera_distance', type=float, default=2.732)
     parser.add_argument('-cdn', '--camera_distance_noise', type=float, default=0.1)
     parser.add_argument('-ts', '--texture_size', type=int, default=4)
     parser.add_argument('-lr', '--adam_lr', type=float, default=0.05)
-    parser.add_argument('-ab1', '--adam_beta1', type=float, default=0.9)
+    parser.add_argument('-ab1', '--adam_beta1', type=float, default=0.5)
     parser.add_argument('-ab2', '--adam_beta2', type=float, default=0.999)
     parser.add_argument('-bs', '--batch_size', type=int, default=4)
     parser.add_argument('-ni', '--num_iteration', type=int, default=100)
@@ -85,25 +86,17 @@ def run():
         loop.set_description('Optimizing. Loss %.4f' % loss.data)
 
     # draw object
-    model.renderer.background_color = (1, 1, 1)
+    #model.renderer.background_color = (1, 1, 1)
     loop = tqdm.tqdm(range(0, 360, 4))
     output_images = []
     for num, azimuth in enumerate(loop):
         loop.set_description('Drawing')
         model.renderer.eye = neural_renderer.get_points_from_angles(2.732, 30, azimuth)
-        x = model.vertices
-        x = x.to(device)
 
-        y = model.faces
-        y = y.to(device)
-
-        z = model.textures
-        z = z.to(device)
-
-        images,_,_ = model.renderer.render(x,y,torch.sigmoid(z))
-        image = images[0].permute((1, 2, 0)).cpu().detach().numpy()
-        output_images.append(image)
-    imageio.mimsave(args.filename_output,output_images)
+        images,_,_ = model.renderer.render(model.vertices.to(device),model.faces.to(device),torch.tanh(model.textures.to(device)))
+        image = images.detach().cpu().numpy()[0].transpose((1, 2, 0))
+        imsave('/tmp/_tmp_%04d.png' % num, image)
+    make_gif(args.filename_output)
 
 
 if __name__ == '__main__':
