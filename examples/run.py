@@ -36,7 +36,7 @@ def run():
     parser.add_argument('-ltv', '--lambda_tv', type=float, default=1e7)
     parser.add_argument('-emax', '--elevation_max', type=float, default=40.)
     parser.add_argument('-emin', '--elevation_min', type=float, default=20.)
-    parser.add_argument('-lrv', '--lr_vertices', type=float, default=0.01)
+    parser.add_argument('-lrv', '--lr_vertices', type=float, default=0.05)
     parser.add_argument('-lrt', '--lr_textures', type=float, default=1.0)
     parser.add_argument('-cd', '--camera_distance', type=float, default=2.732)
     parser.add_argument('-cdn', '--camera_distance_noise', type=float, default=0.1)
@@ -45,7 +45,7 @@ def run():
     parser.add_argument('-ab1', '--adam_beta1', type=float, default=0.9)
     parser.add_argument('-ab2', '--adam_beta2', type=float, default=0.999)
     parser.add_argument('-bs', '--batch_size', type=int, default=4)
-    parser.add_argument('-ni', '--num_iteration', type=int, default=1)
+    parser.add_argument('-ni', '--num_iteration', type=int, default=100)
     parser.add_argument('-g', '--gpu', type=int, default=0)
     args = parser.parse_args()
 
@@ -71,7 +71,10 @@ def run():
         camera_distance_noise=args.camera_distance_noise,
         texture_size=args.texture_size,
     )
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.adam_lr, betas=(args.adam_beta1,args.adam_beta2))
+    optimizer = torch.optim.Adam([
+                {'params':model.vertices,'lr':args.lr_vertices},
+                {'params':model.textures,'lr':args.lr_textures}
+                ], betas=(args.adam_beta1,args.adam_beta2))
     # optimization
     loop = tqdm.tqdm(range(args.num_iteration))
     for _ in loop:
@@ -88,18 +91,16 @@ def run():
     for num, azimuth in enumerate(loop):
         loop.set_description('Drawing')
         model.renderer.eye = neural_renderer.get_points_from_angles(2.732, 30, azimuth)
-        x = torch.unsqueeze(model.vertices,0)
-        x = x.repeat(1,1,1)
+        x = model.vertices
         x = x.to(device)
 
-        y = torch.unsqueeze(model.state_dict()['faces'],0)
-        y = y.repeat(1,1,1)
+        y = model.faces
         y = y.to(device)
 
-        z = torch.unsqueeze(model.state_dict()['textures'],0)
-        z = torch.sigmoid(z.repeat(1,1,1,1,1,1))
+        z = model.textures
         z = z.to(device)
-        images,_,_ = model.renderer.render(x,y,z)
+
+        images,_,_ = model.renderer.render(x,y,torch.sigmoid(z))
         image = images[0].permute((1, 2, 0)).cpu().detach().numpy()
         output_images.append(image)
     imageio.mimsave(args.filename_output,output_images)

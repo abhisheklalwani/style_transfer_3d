@@ -14,7 +14,6 @@ import neural_renderer
 from .model_with_hooks import NewModel
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-torch.autograd.set_detect_anomaly(True)
 
 class StyleTransferModel(nn.Module):
     def __init__(
@@ -62,14 +61,14 @@ class StyleTransferModel(nn.Module):
         
         #self.mesh = neural_renderer.Mesh.fromobj(filename_mesh, texture_size)
         vertices,faces = neural_renderer.load_obj(filename_mesh)
-        shape = (faces.shape[0], texture_size, texture_size, texture_size, 3)
-        textures = 0.05*torch.randn(*shape)
+        self.vertices_original = torch.clone(vertices).detach()
+        self.vertices = nn.Parameter(vertices[None,:,:])
         
-        self.vertices = nn.Parameter(vertices)
-        self.register_buffer('faces', faces)
-        self.register_buffer('textures', textures)
+        self.register_buffer('faces', faces[None, :, :])
 
-        self.vertices_original = self.vertices
+        texture_size = 4
+        textures = torch.zeros(1, self.faces.shape[1], texture_size, texture_size, texture_size, 3, dtype=torch.float32)
+        self.textures = nn.Parameter(textures)
 
         # setup renderer
         renderer = neural_renderer.Renderer()
@@ -79,8 +78,11 @@ class StyleTransferModel(nn.Module):
 
 
     def extract_style_feature(self, images, masks=None):
-        mean = np.array([103.939, 116.779, 123.68], 'float32')  # BGR
-        images = torch.from_numpy(images.cpu().detach().numpy()[:, ::-1]*255 - mean[None, :, None, None])
+        images_np = images.cpu().detach().numpy()
+        mean = np.array([images_np[:, 0, :, :].mean(),images_np[:, 1, :, :].mean(), images_np[:, 2, :, :].mean()], 'float32')  # BGR
+        
+        images = torch.from_numpy((images_np[:, ::-1] - mean[None, :, None, None])*255)
+
         images = images.to(device)
         features = self.vgg16.forward(images).values()
         if masks is None:
@@ -102,14 +104,14 @@ class StyleTransferModel(nn.Module):
         return style_features
 
     def compute_style_loss(self, features):
-        loss = [torch.mean(torch.square(f - fr.expand(f.shape))) for f, fr in zip(features, self.features_ref)]
+        loss = [torch.sum(torch.square(f - fr.expand(f.shape))) for f, fr in zip(features, self.features_ref)]
         loss = reduce(lambda a, b: a + b, loss)
         batch_size = features[0].shape[0]
         loss /= batch_size
         return loss
 
     def compute_content_loss(self):
-        loss = torch.mean(torch.square(self.vertices - self.vertices_original))
+        loss = torch.sum(torch.square(self.vertices - self.vertices_original))
         return loss
 
     def compute_tv_loss(self, images, masks):
@@ -117,7 +119,7 @@ class StyleTransferModel(nn.Module):
         s2 = torch.square(images[:, :, :-1, 1:] - images[:, :, :-1, :-1])
         masks = masks[:, None, :-1, :-1].expand(s1.shape)        
         masks = masks.data == 1
-        return torch.mean(masks * (s1 + s2))
+        return torch.sum(masks * (s1 + s2))
 
     def __call__(self, batch_size):
         xp = self.xp
@@ -141,26 +143,25 @@ class StyleTransferModel(nn.Module):
         # compute loss
         #x,y,z = self.mesh.get_batch(batch_size)
         
-        x = torch.unsqueeze(self.vertices,0)
-        x = x.repeat(batch_size,1,1)
+        x = self.vertices.repeat(batch_size,1,1)
         x = x.to(device)
 
-        y = torch.unsqueeze(self.state_dict()['faces'],0)
-        y = y.repeat(batch_size,1,1)
+        y = self.faces.repeat(batch_size,1,1)
         y = y.to(device)
 
-        z = torch.unsqueeze(self.state_dict()['textures'],0)
-        z = torch.sigmoid(z.repeat(batch_size,1,1,1,1,1))
+        z = self.textures.repeat(batch_size,1,1,1,1,1)
         z = z.to(device)
 
-        images,_,_ = self.renderer.render(x,y,z)
+        images,_,_ = self.renderer.render(x,y,torch.sigmoid(z))
         # for image in images:
         #     plt.imshow(image.permute(1,2,0).cpu().detach().numpy())
         #     plt.show()
+        #     break
         masks = self.renderer.render_silhouettes(x,y)
         # for image in masks:
         #     plt.imshow(image.cpu().detach().numpy())
         #     plt.show()
+        #     break
         # import IPython
         # IPython.embed()
         with torch.autograd.no_grad():
@@ -168,7 +169,10 @@ class StyleTransferModel(nn.Module):
 
         loss_style = self.compute_style_loss(features)
         loss_content = self.compute_content_loss()
-        print('Content Loss=',loss_content)
+        # print('Content weight=',self.lambda_content)
+        # print('Content Loss=',loss_content)
+        # print('Style weight=',self.lambda_style)
+        # print('Style Loss=',loss_style)
         loss_tv = self.compute_tv_loss(images, masks)
         loss = self.lambda_style * loss_style + self.lambda_content * loss_content + self.lambda_tv * loss_tv
 
